@@ -80,15 +80,18 @@ public static class TimeManager_Patch
     [HarmonyPrefix]
     public static bool SetMode_Patch(TimeManager __instance, int modeIndex, bool forceChange = false)
     {
-        // Detect if the time warp mode index is commanded to pause and store off the
-        // current time warp mode index for later use when unpausing.
-        var modeIndexVar = AccessTools.Field(typeof(TimeManager), "_modeIndex");
-        var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
-        int curModeIndex = (int)modeIndexVar.GetValue(__instance);
-
-        if ((modeIndex == ModSettings.PauseIndex) && (curModeIndex > ModSettings.PauseIndex))
+        if (ModSettings.Instance.PauseMaintainsWarpSpeed.Value)
         {
-           unPauseIndex.SetValue(__instance, curModeIndex);
+            // Detect if the time warp mode index is commanded to pause and store off the
+            // current time warp mode index for later use when unpausing.
+            var modeIndexVar = AccessTools.Field(typeof(TimeManager), "_modeIndex");
+            var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
+            int curModeIndex = (int)modeIndexVar.GetValue(__instance);
+
+            if ((modeIndex == ModSettings.PauseIndex) && (curModeIndex > ModSettings.PauseIndex))
+            {
+                unPauseIndex.SetValue(__instance, curModeIndex);
+            }
         }
 
         return true; // Allow original to be called
@@ -108,10 +111,17 @@ public static class TimeManager_Patch
         }
         else
         {
-            var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
-            int unPauseIndexVal = (int)unPauseIndex.GetValue(__instance);
-            
-            __instance.SetMode(unPauseIndexVal);
+            if (ModSettings.Instance.PauseMaintainsWarpSpeed.Value)
+            {
+                var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
+                int unPauseIndexVal = (int)unPauseIndex.GetValue(__instance);
+
+                __instance.SetMode(unPauseIndexVal);
+            }
+            else
+            {
+                __instance.SetMode(ModSettings.NormalSpeedIndex);
+            }
         }
     
         return false; // Never call the original
@@ -124,14 +134,16 @@ public static class TimeManager_Patch
     // ModSettings class when the user changes one of the default Slow-Mo or Fast Forward time warp speeds.
 
     [HarmonyPatch(nameof(TimeManager.Update))]
-    [HarmonyPostfix]
-    public static void Update_Patch(TimeManager __instance)
+    [HarmonyPrefix]
+    public static bool Update_Patch(TimeManager __instance)
     {
         // Obtain the private time warp mode list field so it can be checked and modified.
         var modes = AccessTools.Field(typeof(TimeManager), "_modes");
         List<ITimeMultiplierMode> modeList = (List<ITimeMultiplierMode>)modes.GetValue(__instance);
 
-        if (ModApi.Common.Game.InFlightScene && _updateWarpModesNextFrame)
+        if (ModApi.Common.Game.InFlightScene && 
+            (_updateWarpModesNextFrame ||
+            (modeList.Count != ModSettings.WarpModeArray.Length)))
         {
             UpdateWarpModeList(__instance, ref modeList);
             
@@ -144,7 +156,7 @@ public static class TimeManager_Patch
         {
             HandleCustomKeybinds(__instance);
         }
-
+        return true;
     }
     private static void UpdateWarpModeList(TimeManager __instance, ref List<ITimeMultiplierMode> modeList)
     {

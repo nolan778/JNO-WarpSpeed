@@ -15,9 +15,9 @@ MonoBehaviour:
   _assemblies:
   - WarpSpeed.dll
   _author: SE
-  _description: Provides more time acceleration steps and modified time warp behavior
-    for fine tuned simulation control.  This mod requires the Juno Harmony mod to
-    be installed first.
+  _description: Provides more time acceleration steps, modified time warp behavior,
+    and additional keybinds for fine tuned simulation control.  This mod requires
+    the Juno Harmony mod to be installed first.
   _loadPriority: 1000
   _name: WarpSpeed
   _otherAssets: []
@@ -29,7 +29,7 @@ MonoBehaviour:
   _steamTitle: 
   _steamVisibility: 0
   _versionMajor: 0
-  _versionMinor: 1
+  _versionMinor: 22
   _partCategories: []
   _parts: []
   _partStyleExtensions: []

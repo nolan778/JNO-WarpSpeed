@@ -69,6 +69,8 @@ namespace Assets.Scripts
         public EnumSetting<KeyCode> FastForwardModeKeybind { get; private set; }
         public EnumSetting<KeyCode> WarpModeKeybind { get; private set; }
 
+        public BoolSetting PauseMaintainsWarpSpeed { get; private set; }
+
         public NumericSetting<int> DefaultSlowMotionSpeed { get; private set; }
         public NumericSetting<int> DefaultFastForwardSpeed { get; private set; }
 
@@ -87,6 +89,10 @@ namespace Assets.Scripts
         /// </value>
         public static ModSettings Instance => _instance ?? (_instance = Game.Instance.Settings.ModSettings.GetCategory<ModSettings>());
         private void OnWarpModeSpeed_Changed(object sender, SettingChangedEventArgs<int> e)
+        {
+            TimeManager_Patch._updateWarpModesNextFrame = true;
+        }
+        private void OnPauseMaintainsWarpSpeed_Changed(object sender, SettingChangedEventArgs<bool> e)
         {
             TimeManager_Patch._updateWarpModesNextFrame = true;
         }
@@ -115,6 +121,9 @@ namespace Assets.Scripts
             WarpModeKeybind = CreateEnum<KeyCode>("Warp Mode Keybind", "warpModeKeybind")
                 .SetDescription("Keybind to mirror the Warp Mode button on the top right Time Panel.")
                 .SetDefault(KeyCode.None);
+            PauseMaintainsWarpSpeed = CreateBool("Pause Maintains Warp Speed", "pauseMaintainsWarpSpeed")
+                .SetDescription("Unpausing will return time warp speed to the last speed before pausing.  If disabled, unpausing will return warp speed to 1.0x.")
+                .SetDefault(true);
             DefaultSlowMotionSpeed = CreateNumeric<int>("Default Slow Motion Speed", 1, 6, 1, "defaultSlowMotionSpeed")
                 .SetDescription("If not already in Slow Motion Mode, specifies the default time acceleration speed to set on entering Slow Motion Mode.")
                 .SetDisplayFormatter(displayFormatter)
@@ -126,8 +135,9 @@ namespace Assets.Scripts
 
             DefaultSlowMotionSpeed.Changed += new EventHandler<SettingChangedEventArgs<int>>(OnWarpModeSpeed_Changed);
             DefaultFastForwardSpeed.Changed += new EventHandler<SettingChangedEventArgs<int>>(OnWarpModeSpeed_Changed);
+            PauseMaintainsWarpSpeed.Changed += new EventHandler<SettingChangedEventArgs<bool>>(OnPauseMaintainsWarpSpeed_Changed);
         }
-
+        
         public delegate string TimeWarpSettingDisplayDelegate(int setting);
         public static string TimeWarpSettingDisplay(int setting)
         {
