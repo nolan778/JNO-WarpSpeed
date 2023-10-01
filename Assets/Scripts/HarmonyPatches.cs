@@ -3,6 +3,9 @@ using HarmonyLib;
 using ModApi.Flight;
 using ModApi.Common;
 using System.Collections.Generic;
+using UnityEngine;
+using ModApi.Flight.UI;
+using Assets.Scripts;
 
 // Not Well-Known Tips for Harmony Patching:
 // 1. Accessing private fields that don't have getter/setter functions:
@@ -26,19 +29,7 @@ using System.Collections.Generic;
 [HarmonyPatch(typeof(TimeManager))]
 public static class TimeManager_Patch
 {
-    // Some override indices for time warp mode lists in this TimeManager class
-    // Ideally these would be configurable, but for now the list of time warp modes
-    // available are hard-coded.
-    private static int PauseIndex = 0;
-    private static int FirstSlowMoIndex = PauseIndex + 1;
-    private static int LastSlowMoIndex = FirstSlowMoIndex + 5;
-    private static int NormalSpeedIndex = LastSlowMoIndex + 1;
-    private static int FirstFastForwardIndex = NormalSpeedIndex + 1;
-    private static int LastFastForwardIndex = FirstFastForwardIndex + 2;
-    private static int FirstWarpIndex = LastFastForwardIndex + 1;
-    
-    private static int SlowMoButtonIndex = NormalSpeedIndex - 2;
-    private static int FastForwardButtonIndex = FirstFastForwardIndex;
+    public static bool _updateWarpModesNextFrame = true;
 
     [HarmonyPatch(nameof(TimeManager.SetSlowMotionMode))]
     [HarmonyPrefix]
@@ -49,9 +40,9 @@ public static class TimeManager_Patch
         // Only update the time warp mode setting if not already in slow motion mode.
         var modeIndex = AccessTools.Field(typeof(TimeManager), "_modeIndex");
         int modeIndexVal = (int)modeIndex.GetValue(__instance);
-        if ((modeIndexVal < FirstSlowMoIndex) || (modeIndexVal > LastSlowMoIndex))
+        if ((modeIndexVal < ModSettings.FirstSlowMoIndex) || (modeIndexVal > ModSettings.LastSlowMoIndex))
         {
-            __instance.SetMode(SlowMoButtonIndex);
+            __instance.SetMode(ModSettings.Instance.DefaultSlowMotionSpeed);
         }
         return false; // Never call the original
     }
@@ -63,7 +54,7 @@ public static class TimeManager_Patch
         )
     {
         // Play button always sets to normal 1.0x speed mode.
-        __instance.SetMode(NormalSpeedIndex);
+        __instance.SetMode(ModSettings.NormalSpeedIndex);
         return false; // Never call the original
     }
 
@@ -76,9 +67,9 @@ public static class TimeManager_Patch
         // Only update the time warp mode setting if not already in fast forward mode.
         var modeIndex = AccessTools.Field(typeof(TimeManager), "_modeIndex");
         int modeIndexVal = (int)modeIndex.GetValue(__instance);
-        if ((modeIndexVal < FirstFastForwardIndex) || (modeIndexVal > LastFastForwardIndex))
+        if ((modeIndexVal < ModSettings.FirstFastForwardIndex) || (modeIndexVal > ModSettings.LastFastForwardIndex))
         {
-            __instance.SetMode(FastForwardButtonIndex);
+            __instance.SetMode(ModSettings.Instance.DefaultFastForwardSpeed);
         }
         return false; // Never call the original
     }
@@ -95,7 +86,7 @@ public static class TimeManager_Patch
         var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
         int curModeIndex = (int)modeIndexVar.GetValue(__instance);
 
-        if ((modeIndex == PauseIndex) && (curModeIndex > PauseIndex))
+        if ((modeIndex == ModSettings.PauseIndex) && (curModeIndex > ModSettings.PauseIndex))
         {
            unPauseIndex.SetValue(__instance, curModeIndex);
         }
@@ -113,7 +104,7 @@ public static class TimeManager_Patch
     {
         if (paused)
         {
-            __instance.SetMode(PauseIndex);
+            __instance.SetMode(ModSettings.PauseIndex);
         }
         else
         {
@@ -128,12 +119,10 @@ public static class TimeManager_Patch
 
     // Using the Update method, while in a Flight Scene to override the default Time Warp Multiplier
     // List and associated indices on the first frame it is called.  This is handled by checking
-    // the size of the _modes list to see if it matches the game's default size of 16, to know that
-    // the override has not yet been applied.  There may be a better method to use that is only called
-    // once, but I had issues performing all of these actions on other functions.  Particularly, trying
-    // to patch a postfix on the constructor was a big headache that I could not get to work.
-    private static int OriginalTimeWarpModeCount = 16;
-    
+    // the _updateWarpModesNextFrame variable, to know if the the override has yet been applied.
+    // This variable is initialized to true on class creation, but it can also be reset to true by the
+    // ModSettings class when the user changes one of the default Slow-Mo or Fast Forward time warp speeds.
+
     [HarmonyPatch(nameof(TimeManager.Update))]
     [HarmonyPostfix]
     public static void Update_Patch(TimeManager __instance)
@@ -142,59 +131,92 @@ public static class TimeManager_Patch
         var modes = AccessTools.Field(typeof(TimeManager), "_modes");
         List<ITimeMultiplierMode> modeList = (List<ITimeMultiplierMode>)modes.GetValue(__instance);
 
-        if (Game.InFlightScene && (modeList.Count == OriginalTimeWarpModeCount))
+        if (ModApi.Common.Game.InFlightScene && _updateWarpModesNextFrame)
         {
-            // Obtain private field and property info objects, so they can be overridden.
-            var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
-            var slowMotion = AccessTools.Field(typeof(TimeManager), "_slowMotion");
-            //var realTime = AccessTools.Field(typeof(TimeManager), "_realTime");
-            var fastForward = AccessTools.Field(typeof(TimeManager), "_fastForward");
-            var firstWarpModeInfo = AccessTools.Property(typeof(TimeManager), "FirstWarpMode");
-            var firstWarpModeSetter = firstWarpModeInfo.GetSetMethod(true);
-            TimeManager.TimeMultiplierMode slowMotionVar = (TimeManager.TimeMultiplierMode)slowMotion.GetValue(__instance);
-            TimeManager.TimeMultiplierMode fastForwardVar = (TimeManager.TimeMultiplierMode)fastForward.GetValue(__instance);
-
-            // Clear the existing time warp mode list so it can be overridden.
-            modeList.Clear();
-
-            // Ideally these would be configurable, but for now the list of time warp modes
-            // available are hard-coded.
+            UpdateWarpModeList(__instance, ref modeList);
             
-            modeList.Add(new TimeManager.TimeMultiplierMode(0.0, warp: false, "Paused")); // PauseIndex
+            //var modeIndexVar = AccessTools.Field(typeof(TimeManager), "_modeIndex");
+            //int curModeIndex = (int)modeIndexVar.GetValue(__instance);
+            //__instance.SetMode(curModeIndex);
+        }
 
-            // Slow-Mo Modes
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 64f, warp: false));
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 32f, warp: false));
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 16f, warp: false));
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 8f, warp: false));
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 4f, warp: false, "Slow-Mo")); // SlowMoButtonIndex
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f / 2f, warp: false));
-            
-            modeList.Add(new TimeManager.TimeMultiplierMode(1f, warp: false)); // NormalSpeedIndex
-            
-            // Fast-Forward Physics Modes
-            modeList.Add(new TimeManager.TimeMultiplierMode(2f, warp: false)); // FastForwardButtonIndex
-            modeList.Add(new TimeManager.TimeMultiplierMode(4f, warp: false));
-            modeList.Add(new TimeManager.TimeMultiplierMode(8f, warp: false));
+        if (ModApi.Common.Game.InFlightScene)
+        {
+            HandleCustomKeybinds(__instance);
+        }
 
-            // Warp (Non-Physics) Modes
-            modeList.Add(new TimeManager.TimeMultiplierMode(10.0)); // FirstWarpIndex
-            modeList.Add(new TimeManager.TimeMultiplierMode(25.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(100.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(500.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(2500.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(10000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(50000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(250000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(1000000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(5000000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(25000000.0));
-            modeList.Add(new TimeManager.TimeMultiplierMode(100000000.0));
+    }
+    private static void UpdateWarpModeList(TimeManager __instance, ref List<ITimeMultiplierMode> modeList)
+    {
+        // Obtain private field and property info objects, so they can be overridden.
+        var unPauseIndex = AccessTools.Field(typeof(TimeManager), "_unPauseIndex");
+        var slowMotion = AccessTools.Field(typeof(TimeManager), "_slowMotion");
+        var fastForward = AccessTools.Field(typeof(TimeManager), "_fastForward");
+        var firstWarpModeInfo = AccessTools.Property(typeof(TimeManager), "FirstWarpMode");
+        var firstWarpModeSetter = firstWarpModeInfo.GetSetMethod(true);
+        TimeManager.TimeMultiplierMode slowMotionVar = (TimeManager.TimeMultiplierMode)slowMotion.GetValue(__instance);
+        TimeManager.TimeMultiplierMode fastForwardVar = (TimeManager.TimeMultiplierMode)fastForward.GetValue(__instance);
 
-            unPauseIndex.SetValue(__instance, NormalSpeedIndex);
-            slowMotionVar.TimeMultiplier = modeList[SlowMoButtonIndex].TimeMultiplier;
-            fastForwardVar.TimeMultiplier = modeList[FastForwardButtonIndex].TimeMultiplier;
-            firstWarpModeSetter.Invoke(__instance, new object[] { FirstWarpIndex });
+        // Clear the existing time warp mode list so it can be overridden.
+        modeList.Clear();
+
+        for (int i = 0; i < ModSettings.WarpModeArray.Length; i++)
+        {
+            bool warp = i >= ModSettings.FirstWarpIndex;
+            string name = null;
+            if (i == 0)
+            {
+                name = "Pause";
+            }
+            else if (i == ModSettings.Instance.DefaultSlowMotionSpeed.Value)
+            {
+                name = "Slow-Mo";
+            }
+
+            modeList.Add(new TimeManager.TimeMultiplierMode(ModSettings.WarpModeArray[i], warp, name));
+        }
+
+        unPauseIndex.SetValue(__instance, ModSettings.NormalSpeedIndex);
+        slowMotionVar.TimeMultiplier = modeList[ModSettings.Instance.DefaultSlowMotionSpeed.Value].TimeMultiplier;
+        fastForwardVar.TimeMultiplier = modeList[ModSettings.Instance.DefaultFastForwardSpeed.Value].TimeMultiplier;
+        firstWarpModeSetter.Invoke(__instance, new object[] { ModSettings.FirstWarpIndex });
+
+        _updateWarpModesNextFrame = false;
+    }
+
+    private static void HandleCustomKeybinds(TimeManager __instance)
+    {
+        // Mirrors Slow Motion Mode Button Clicked on Time Panel at top right of Flight Scene UI
+        if (Input.GetKeyDown(ModSettings.Instance.SlowMotionModeKeybind.Value))
+        {
+            __instance.SetSlowMotionMode();
+        }
+        // Mirrors Normal Speed Mode (Play) Button Clicked on Time Panel at top right of Flight Scene UI
+        else if (Input.GetKeyDown(ModSettings.Instance.NormalSpeedModeKeybind.Value))
+        {
+            __instance.SetNormalSpeedMode();
+        }
+        // Mirrors Fast Forward Mode Button Clicked on Time Panel at top right of Flight Scene UI
+        else if (Input.GetKeyDown(ModSettings.Instance.FastForwardModeKeybind.Value))
+        {
+            __instance.SetFastForwardMode();
+        }
+        // Mirrors Warp Mode Button Clicked on Time Panel at top right of Flight Scene UI
+        // Code borrowed from TimePanelController.OnWarpModeClicked()
+        else if (Input.GetKeyDown(ModSettings.Instance.WarpModeKeybind.Value))
+        {
+            if (!__instance.CurrentMode.WarpMode)
+            {
+                string failReason = null;
+                if (__instance.CanSetTimeMultiplierMode(__instance.FirstWarpMode, out failReason))
+                {
+                    __instance.SetMode(__instance.FirstWarpMode);
+                }
+                else
+                {
+                    ModApi.Common.Game.Instance.FlightScene.FlightSceneUI.ShowMessage(failReason);
+                }
+            }
         }
     }
 }
